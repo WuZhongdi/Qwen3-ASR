@@ -1,138 +1,175 @@
 import os
 import json
 import yaml
-import pandas as pd
+import argparse
 from pathlib import Path
-import subprocess
+
+import pandas as pd
+import librosa
+import soundfile as sf
 from tqdm import tqdm
 
 
-def load_config(config_path: str) -> dict:
+# =========================
+# Optional text normalizer
+# =========================
+def normalize_text(text: str) -> str:
+    """
+    Put your text normalization logic here.
+    This is where you would:
+        - lowercase
+        - remove punctuation
+        - expand numbers
+        - apply language-specific normalization
+        - etc.
+
+    For now, it's identity.
+    """
+
+    # ---- EXAMPLE (uncomment if needed) ----
+    # text = text.lower()
+    # text = text.strip()
+    # ---------------------------------------
+
+    return text
+
+
+# =========================
+# Audio Processing
+# =========================
+def convert_and_resample_audio(
+    input_path: Path,
+    output_path: Path,
+    target_sr: int = 16000,
+):
+    """
+    Converts .webm (or any readable format) to .wav
+    and resamples to target_sr (default 16kHz).
+    """
+
+    try:
+        audio, sr = librosa.load(input_path, sr=None)  # load original sr
+
+        # Resample if needed
+        if sr != target_sr:
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
+            sr = target_sr
+
+        sf.write(output_path, audio, sr)
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Failed audio processing: {input_path} | {e}")
+        return False
+
+
+# =========================
+# Main processing
+# =========================
+def process_dataset(config_path: str):
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+
+    parquet_path = Path(config["parquet_path"])
+    audio_root = Path(config["audio_root"])
+    output_root = Path(config["output_root"])
+    fold_column = config["fold_column"]
+    val_fold_index = config["val_fold_index"]
+    audio_column = config.get("audio_column", "audio")
+    text_column = config.get("text_column", "text")
+    target_sr = config.get("target_sample_rate", 16000)
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    wav_output_dir = output_root / "wavs"
+    wav_output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("Loading parquet...")
+    df = pd.read_parquet(parquet_path)
+
+    print(f"Total samples before filtering: {len(df)}")
+
+    # ----------------------------------
+    # 1. Filter empty transcripts
+    # ----------------------------------
+    df = df[df[text_column].notna()]
+    df = df[df[text_column].str.strip() != ""]
+
+    print(f"After transcript filtering: {len(df)}")
+
+    train_records = []
+    val_records = []
+
+    print("Processing audio files...")
+
+    for _, row in tqdm(df.iterrows(), total=len(df)):
+
+        audio_rel_path = row[audio_column]
+        transcript = row[text_column]
+        fold_value = row[fold_column]
+
+        input_audio_path = audio_root / audio_rel_path
+
+        if not input_audio_path.exists():
+            print(f"[WARNING] Missing audio file: {input_audio_path}")
+            continue  # drop instead of crash
+
+        # Convert to wav filename
+        wav_filename = Path(audio_rel_path).with_suffix(".wav").name
+        output_audio_path = wav_output_dir / wav_filename
+
+        success = convert_and_resample_audio(
+            input_audio_path,
+            output_audio_path,
+            target_sr=target_sr,
+        )
+
+        if not success:
+            continue
+
+        # ----------------------------------
+        # 2. TEXT NORMALIZATION HOOK
+        # ----------------------------------
+        transcript = normalize_text(transcript)
+
+        # Qwen ASR format
+        formatted_text = f"language English<asr_text>{transcript}"
+
+        record = {
+            "audio": str(output_audio_path),
+            "text": formatted_text,
+        }
+
+        if fold_value == val_fold_index:
+            val_records.append(record)
+        else:
+            train_records.append(record)
+
+    # Write JSONL files
+    train_path = output_root / "train.jsonl"
+    val_path = output_root / "val.jsonl"
+
+    print("Writing JSONL files...")
+
+    with open(train_path, "w") as f:
+        for r in train_records:
+            f.write(json.dumps(r) + "\n")
+
+    with open(val_path, "w") as f:
+        for r in val_records:
+            f.write(json.dumps(r) + "\n")
+
+    print("Done.")
+    print(f"Train samples: {len(train_records)}")
+    print(f"Validation samples: {len(val_records)}")
+    print(f"Audio resampled to: {target_sr} Hz")
 
 
-def format_text(language_tag: str, transcript: str) -> str:
-    return f"language {language_tag}<asr_text>{transcript.strip()}"
-
-
-def convert_webm_to_wav(input_path: Path, output_path: Path):
-    """
-    Uses ffmpeg to convert webm to wav.
-    Assumes ffmpeg is installed on HPC.
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i", str(input_path),
-        str(output_path)
-    ]
-
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def process_split(df, config, split_name):
-    output_dir = Path(config["output_dir"])
-    output_file = output_dir / f"{split_name}.jsonl"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    audio_col = config["audio_id_column"]
-    text_col = config["text_column"]
-    language_tag = config.get("language_tag", "English")
-    extension = config.get("audio_extension", ".webm")
-    use_absolute = config.get("use_absolute_paths", True)
-
-    convert_audio = config.get("convert_to_wav", False)
-    converted_dir = Path(config.get("converted_audio_dir", ""))
-
-    audio_dir = Path(config["audio_dir"])
-
-    kept = 0
-    skipped_empty = 0
-    skipped_missing = 0
-
-    with open(output_file, "w", encoding="utf-8") as fout:
-        for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Processing {split_name}"):
-
-            transcript = str(row[text_col]).strip()
-
-            # 1️⃣ Filter empty transcripts
-            if transcript == "" or transcript.lower() == "nan":
-                skipped_empty += 1
-                continue
-
-            audio_id = str(row[audio_col])
-            input_audio_path = audio_dir / f"{audio_id}{extension}"
-
-            # 2️⃣ Drop missing audio files
-            if not input_audio_path.exists():
-                skipped_missing += 1
-                continue
-
-            # 3️⃣ Convert if needed
-            if convert_audio:
-                output_audio_path = converted_dir / f"{audio_id}.wav"
-
-                if not output_audio_path.exists():
-                    convert_webm_to_wav(input_audio_path, output_audio_path)
-
-                final_audio_path = output_audio_path
-            else:
-                final_audio_path = input_audio_path
-
-            final_audio_path = (
-                final_audio_path.resolve() if use_absolute else final_audio_path
-            )
-
-            record = {
-                "audio": str(final_audio_path),
-                "text": format_text(language_tag, transcript)
-            }
-
-            fout.write(json.dumps(record, ensure_ascii=False) + "\n")
-            kept += 1
-
-    print(f"\nSplit: {split_name}")
-    print(f"Kept: {kept}")
-    print(f"Skipped empty transcripts: {skipped_empty}")
-    print(f"Skipped missing audio: {skipped_missing}")
-    print(f"Saved to: {output_file}\n")
-
-
-def main(config):
-
-    df = pd.read_parquet(config["parquet_path"])
-
-    audio_col = config["audio_id_column"]
-    text_col = config["text_column"]
-    fold_col = config["fold_column"]
-    val_fold = config["validation_fold_index"]
-
-    required_cols = [audio_col, text_col, fold_col]
-    for col in required_cols:
-        if col not in df.columns:
-            raise ValueError(f"Column '{col}' not found in parquet.")
-
-    # 4️⃣ Train/Validation split using fold
-    train_df = df[df[fold_col] != val_fold].reset_index(drop=True)
-    val_df = df[df[fold_col] == val_fold].reset_index(drop=True)
-
-    print(f"Total samples: {len(df)}")
-    print(f"Train samples: {len(train_df)}")
-    print(f"Validation samples: {len(val_df)}")
-
-    process_split(train_df, config, "train")
-    process_split(val_df, config, "validation")
-
-
+# =========================
+# CLI
+# =========================
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Prepare Qwen JSONL dataset.")
-    parser.add_argument("--config", type=str, required=True)
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True, help="Path to data_config.yaml")
     args = parser.parse_args()
-    config = load_config(args.config)
-    main(config)
+
+    process_dataset(args.config)
