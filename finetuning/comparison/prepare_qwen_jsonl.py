@@ -8,30 +8,22 @@ import pandas as pd
 import librosa
 import soundfile as sf
 from tqdm import tqdm
+from TextNormalizer import TextNormalizer
 
 
 # =========================
 # Optional text normalizer
 # =========================
-def normalize_text(text: str) -> str:
-    """
-    Put your text normalization logic here.
-    This is where you would:
-        - lowercase
-        - remove punctuation
-        - expand numbers
-        - apply language-specific normalization
-        - etc.
+class TextNormalize:
+    def __init__(self):
+        # Initialize any resources needed for normalization
+        self.text_normalizer = TextNormalizer()
 
-    For now, it's identity.
-    """
-
-    # ---- EXAMPLE (uncomment if needed) ----
-    # text = text.lower()
-    # text = text.strip()
-    # ---------------------------------------
-
-    return text
+    def normalize(self, text: str) -> str:
+        # Placeholder for actual normalization logic
+        # For example, you could expand contractions, remove punctuation, etc.
+          # simple example
+        return self.text_normalizer.normalize(text)
 
 
 # =========================
@@ -67,6 +59,7 @@ def convert_and_resample_audio(
 # Main processing
 # =========================
 def process_dataset(config_path: str):
+    normalizer = TextNormalize()
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
@@ -129,7 +122,7 @@ def process_dataset(config_path: str):
         # ----------------------------------
         # 2. TEXT NORMALIZATION HOOK
         # ----------------------------------
-        transcript = normalize_text(transcript)
+        transcript = normalizer.normalize(transcript)
 
         # Qwen ASR format
         formatted_text = f"language English<asr_text>{transcript}"
