@@ -20,9 +20,6 @@ class TextNormalize:
         self.text_normalizer = TextNormalizer()
 
     def normalize(self, text: str) -> str:
-        # Placeholder for actual normalization logic
-        # For example, you could expand contractions, remove punctuation, etc.
-          # simple example
         return self.text_normalizer.normalize(text)
 
 
