@@ -62,7 +62,7 @@ def run_inference(model, data, cfg):
         context_input = ""
         if use_context:
             audio_id = sample["audio"]
-            word = audio_id.split("_")[-4]
+            word = audio_id.split("_")[-4].replace(" ", "_")
             task = audio_id.split("_")[-3].lower()
             word_json_dir = cfg["data"]["word_json_dir"]
             current_word_json_dir = f"{word_json_dir}/{word}.json"
