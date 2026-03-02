@@ -47,14 +47,25 @@ def run_inference(model, data, cfg):
     preds, targets = [], []
 
     use_context = cfg["evaluation"]["use_context"]
-    context_field = cfg["evaluation"]["context_field"]
 
     for sample in tqdm(data):
 
-        #  Context hook (leave for you to customize if needed)
+        # read context from word JSON
         context_input = ""
         if use_context:
-            context_input = sample.get(context_field, "")
+            audio_id = sample["audio_id"]
+            word = audio_id.split("_")[-4]
+            task = audio_id.split("_")[-3].lower()
+            word_json_dir = cfg["data"]["word_json_dir"]
+            current_word_json_dir = f"{word_json_dir}/{word}.json"
+            with open(current_word_json_dir, "r") as f:
+                word_data = json.load(f)
+            if task == "definition":
+                context_input = word_data["definition_question"]
+            elif task == "sentence":
+                context_input = word_data["sentence_question"]
+            else:
+                raise ValueError(f"Unknown task type: {task}")
 
         result = model.transcribe(
             audio=sample["audio"],
