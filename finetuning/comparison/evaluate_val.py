@@ -89,12 +89,16 @@ def compute_metrics(preds, targets):
 
 def main(config_path: str):
 
+    print("Loading configuration...")
     cfg = load_config(config_path)
 
+    print("Loading model...")
     model = load_model(cfg)
 
+    print("Loading data...")
     data = load_data(cfg["data"]["val_file"])
 
+    print("Running inference...")
     preds, targets = run_inference(model, data, cfg)
 
     wer, cer = compute_metrics(preds, targets)
