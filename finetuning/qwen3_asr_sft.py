@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 import librosa
 import torch
 from datasets import load_dataset
+from sympy.codegen.ast import continue_
+
 from qwen_asr import Qwen3ASRModel
 from transformers import (GenerationConfig, Trainer, TrainerCallback,
                           TrainingArguments)
@@ -130,14 +132,16 @@ class DataCollatorForQwen3ASRFinetuning:
             audio=audios,
             return_tensors="pt",
             padding=True,
-            truncation=False,
+            truncation=True,
+            max_length=1024,
         )
         prefix_inputs = self.processor(
             text=prefix_texts,
             audio=audios,
             return_tensors="pt",
             padding=True,
-            truncation=False,
+            truncation=True,
+            max_length=1024,
         )
 
         prefix_lens = prefix_inputs["attention_mask"].sum(dim=1).tolist()
@@ -246,6 +250,7 @@ def main():
         raise ValueError("TRAIN_FILE is required (json/jsonl). Needs fields: audio, text, optional prompt")
 
     use_bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8
+    print("Using bfloat16:", use_bf16)
     asr_wrapper = Qwen3ASRModel.from_pretrained(
         args_cli.model_path,
         dtype=torch.bfloat16 if use_bf16 else torch.float16,
