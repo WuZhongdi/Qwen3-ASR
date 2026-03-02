@@ -26,14 +26,22 @@ def load_model(cfg):
         "float32": torch.float32,
     }
 
-    model = Qwen3ASRModel.from_pretrained(
-        cfg["model"]["name"],
-        cache_dir=cfg["model"]["cache_dir"],
-        dtype=dtype_map[cfg["model"]["dtype"]],
-        device_map=cfg["model"]["device"],
-        max_inference_batch_size=cfg["model"]["max_inference_batch_size"],
-        max_new_tokens=cfg["model"]["max_new_tokens"],
-    )
+    if cfg['model']['type'] == "finetuned":
+        print(f"Loading fine-tuned model from {cfg['model']['name']}...")
+        model = Qwen3ASRModel.from_pretrained(
+            cfg["model"]["name"],
+            dtype=dtype_map[cfg["model"]["dtype"]],
+            device_map=cfg["model"]["device"],
+        )
+    else:
+        model = Qwen3ASRModel.from_pretrained(
+            cfg["model"]["name"],
+            cache_dir=cfg["model"]["cache_dir"],
+            dtype=dtype_map[cfg["model"]["dtype"]],
+            device_map=cfg["model"]["device"],
+            max_inference_batch_size=cfg["model"]["max_inference_batch_size"],
+            max_new_tokens=cfg["model"]["max_new_tokens"],
+        )
 
     return model
 
